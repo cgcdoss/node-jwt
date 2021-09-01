@@ -61,8 +61,30 @@ class App {
         const token = jwt.sign({ id, usuario: username }, this.app.get('env').secret, {
           expiresIn: 300
         });
-        
+
         res.json({ auth: true, token });
+      }
+    });
+
+    this.routes.post('/tokencomjwt', (req, res) => {
+      const username = req.body.user;
+      const refreshToken = req.body.refreshToken;
+
+      if (refreshToken) {
+        jwt.verify(refreshToken, 'outrosegredo', (err: any, decoded: any) => {
+          if (err) {
+            res.status(400).json({ auth: false, msg: `Token inválido: ${err.message}`, data: err });
+          } else {
+            const id = 1;
+            const token = jwt.sign({ id, usuario: username }, this.app.get('env').secret, {
+              expiresIn: 300
+            });
+
+            res.json({ auth: true, token });
+          }
+        });
+      } else {
+        res.status(401).json({ auth: false, msg: 'Nenhum token informado no header' });
       }
     });
   }
