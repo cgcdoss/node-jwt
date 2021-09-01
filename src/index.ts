@@ -1,9 +1,13 @@
+import cors from 'cors';
 import dotenv from 'dotenv';
 import express, { json, NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
+import { uid } from 'uid';
 
 class App {
   app = express();
+  routes = express.Router();
+  refreshTokens: { refreshToken: string, usuario: string }[] = [];
 
   constructor() {
     dotenv.config();
@@ -12,44 +16,63 @@ class App {
       secret: process.env.SECRET
     });
 
+    this.app.use(cors());
     this.app.use(json());
 
-    this.app.post('/login', (req, res) => {
-      if (req.body.user === 'cgcdoss' && req.body.password === '123') {
+    this.carregaRotasAuth();
+    this.carregaRotasExemplo();
+
+    this.app.use('/api', this.routes);
+  }
+
+  private carregaRotasAuth(): void {
+    this.routes.post('/login', (req, res) => {
+      if ((req.body.user === 'cgc' || req.body.user === 'cgcdoss') && req.body.password === '123') {
         const id = 1; // Viria do banco
-        const token = jwt.sign({ id, usuario: 'Lester' }, this.app.get('env').secret, {
+        const token = jwt.sign({ id, usuario: req.body.user }, this.app.get('env').secret, {
           expiresIn: 300,
           // notBefore: '7d', // define a partir de qual data aquele token se torna válido
         });
 
-        res.json({ auth: true, token });
+        let refreshToken = uid(256);
+        this.refreshTokens.push({ refreshToken, usuario: req.body.user });
+
+        res.json({ auth: true, token, refreshToken });
       } else {
-        res.status(500).json({ msg: 'Login inválido' });
+        res.status(400).json({ msg: 'Login inválido' });
       }
     });
 
-    this.app.post('/logout', (req, res) => res.json({ auth: false, token: null }));
+    this.routes.post('/logout', (req, res) => {
+      const username = req.body.user;
+      const refreshToRemove = this.refreshTokens.find(r => r.usuario === username);
+      if (refreshToRemove)
+        this.refreshTokens.splice(this.refreshTokens.indexOf(refreshToRemove), 1);
 
-    this.app.get('/clientes', this.verificaJWTAsincrono, (req, res) => { // desse jeito não posso chamar propriedades dessa classe, pois elas não vão existir no momento que o verifyJWT for chamado
-      res.json([{ nome: 'cliente1' }]);
+      res.json({ auth: false, token: null });
     });
 
-    this.app.get(
-      '/funcionarios',
-      (req, res, next) => this.verificaJWTSincrono(req, res, next), // desse jeito posso chamar propriedade e métodos dessa class, tipo this.app.get(...)
-      (req, res) => {
-        res.json([{ nome: 'funci1' }]);
-      }
-    );
+    this.routes.post('/token', (req, res) => {
+      const username = req.body.user;
+      const refreshToken = req.body.refreshToken;
 
+      if (this.refreshTokens.find(t => t.refreshToken === refreshToken && t.usuario === username)) {
+        const id = 1;
+        const token = jwt.sign({ id, usuario: username }, this.app.get('env').secret, {
+          expiresIn: 300
+        });
+        
+        res.json({ auth: true, token });
+      }
+    });
   }
 
   verificaJWTAsincrono(req: Request, res: Response, next: NextFunction): void {
-    const token = req.headers['x-acess-token'] as string;
+    const token = req.headers['x-access-token'] as string;
     if (token) {
       jwt.verify(token, process.env.SECRET as string, (err: any, decoded: any) => {
         if (err) {
-          res.status(500).json({ auth: false, msg: `Token inválido: ${err.message}`, data: err });
+          res.status(400).json({ auth: false, msg: `Token inválido: ${err.message}`, data: err });
         } else {
           (req as any).userId = decoded.id;
           next();
@@ -61,18 +84,32 @@ class App {
   }
 
   verificaJWTSincrono(req: Request, res: Response, next: NextFunction): void {
-    const token = req.headers['x-acess-token'] as string;
+    const token = req.headers['x-access-token'] as string;
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.SECRET as string) as jwt.JwtPayload;
         (req as any).userId = decoded.id;
         next();
       } catch (error: any) {
-        res.status(500).json({ auth: false, msg: `Token inválido: ${error.message}`, data: error });
+        res.status(400).json({ auth: false, msg: `Token inválido: ${error.message}`, data: error });
       }
     } else {
       res.status(401).json({ auth: false, msg: 'Nenhum token informado no header' });
     }
+  }
+
+  private carregaRotasExemplo(): void {
+    this.routes.get('/clientes', this.verificaJWTAsincrono, (req, res) => { // desse jeito não posso chamar propriedades dessa classe, pois elas não vão existir no momento que o verifyJWT for chamado
+      res.json([{ nome: 'cliente1' }]);
+    });
+
+    this.routes.get(
+      '/funcionarios',
+      (req, res, next) => this.verificaJWTSincrono(req, res, next), // desse jeito posso chamar propriedade e métodos dessa class, tipo this.app.get(...)
+      (req, res) => {
+        res.json([{ nome: 'funci1' }]);
+      }
+    );
   }
 }
 
