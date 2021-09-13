@@ -1,8 +1,23 @@
+import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express, { json, NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { uid } from 'uid';
+
+// let salt = bcrypt.genSaltSync(10);
+const users = [
+  {
+    id: 1,
+    username: 'cgc',
+    password: '$2a$10$xWwoDAMLvua6a.ljBrSuJeB7B5bIM49xMCjpqbD./Tsqf0Iu/RkwO' // bcrypt.hashSync('123', salt)
+  },
+  {
+    id: 2,
+    username: 'cgcdoss',
+    password: '$2a$10$t4MrgqCAdgcA3QXtKnsCku6Ih8ndFHJm67cE9tJJteDnW1/tkPjYe' // bcrypt.hashSync('123', 10) // pode passar um número direto no lugar do salt
+  }
+];
 
 class App {
   app = express();
@@ -27,8 +42,10 @@ class App {
 
   private carregaRotasAuth(): void {
     this.routes.post('/login', (req, res) => {
-      if ((req.body.user === 'cgc' || req.body.user === 'cgcdoss') && req.body.password === '123') {
-        const id = 1; // Viria do banco
+      const user = users.find(u => u.username === req.body.user);
+
+      if (user && bcrypt.compareSync(req.body.password, user.password)) {
+        const id = user.id; // Viria do banco
         const token = jwt.sign({ id, usuario: req.body.user }, this.app.get('env').secret, {
           expiresIn: 300,
           // notBefore: '7d', // define a partir de qual data aquele token se torna válido
@@ -120,16 +137,32 @@ class App {
     }
   }
 
+  // Definindo função dessa forma para não perder a referência ao this (para poder utilizar o this.app...)
+  verificaAuthorization = (req: Request, res: Response, next: NextFunction): void => {
+    const b64auth = (req.headers.authorization || '').split(' ')[1] || '';
+    const [login, senha] = Buffer.from(b64auth, 'base64').toString().split(':');
+
+    const user = users.find(u => u.username === login);
+    if (user && bcrypt.compareSync(senha, user.password)) {
+      req.headers['x-access-token'] = jwt.sign({ id: user.id, usuario: user }, this.app.get('env').secret, { expiresIn: 300 });
+    }
+
+    next();
+  }
+
   private carregaRotasExemplo(): void {
-    this.routes.get('/clientes', this.verificaJWTAsincrono, (req, res) => { // desse jeito não posso chamar propriedades dessa classe, pois elas não vão existir no momento que o verifyJWT for chamado
-      res.json([{ nome: 'cliente1' }]);
+    this.routes.get('/clientes', this.verificaAuthorization, this.verificaJWTAsincrono, (req, res) => { // desse jeito não posso chamar propriedades dessa classe, pois elas não vão existir no momento que o verifyJWT for chamado
+      const timeout = parseInt(req.query.timeout as string) || 0;
+      setTimeout(() => {
+        res.json([{ nome: 'Fulano' }, { nome: 'Ciclano' }]);
+      }, timeout);
     });
 
     this.routes.get(
       '/funcionarios',
       (req, res, next) => this.verificaJWTSincrono(req, res, next), // desse jeito posso chamar propriedade e métodos dessa class, tipo this.app.get(...)
       (req, res) => {
-        res.json([{ nome: 'funci1' }]);
+        res.json([{ nome: 'Beltrano' }, { nome: 'Rubervalson' }]);
       }
     );
   }
